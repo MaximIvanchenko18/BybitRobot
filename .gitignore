@@ -4,3 +4,4 @@ __pycache__
 .vscode
 
 logs/all_logs.log
+models
