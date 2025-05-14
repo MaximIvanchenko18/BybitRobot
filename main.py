@@ -1,6 +1,6 @@
+# PGADMIN - http://localhost:5050/
 from bybit.BybitHelper import Bybit
 from telegram.TelegramHelper import Telegram
-from strategies.Strategy import MyStrategy
 from time import sleep
 import datetime as dt
 from logs.logger import get_logger
@@ -11,8 +11,7 @@ from telegram.Bot import TelegramBot
 if __name__ == '__main__':
     telegram = Telegram(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_BOT_CHAT_ID)
     bot = TelegramBot(config.TELEGRAM_BOT_TOKEN)
-    bybit = Bybit(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, telegram)
-    strategy = MyStrategy(bybit)
+    # bybit = Bybit(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, telegram)
     logger = get_logger('main')
 
     bot.run() # Запускаем тг-бота
@@ -70,3 +69,10 @@ if __name__ == '__main__':
     #         break
     
     # telegram.send_telegram('Я выключился!')
+
+    # Создаем список из объектов Strategy (у каждого user_id и все введенные параметры)
+    # Внутри try проходим по всем объектам (хочется асинхронно) и выполняем execute()
+    # Внутри execute() initial_check (базовые проверки, которые сейчас в try)
+    # Далее условия тех анализа
+    # Если выбрано еще и ML, то передаем сигнал тех анализа в блок ML
+    # Внутри блока ML берем еще предсказания LSTM и инференс RL

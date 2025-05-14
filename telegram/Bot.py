@@ -125,7 +125,7 @@ class TelegramBot:
             for i in range(0, len(self.available_tickers), row_width):
                 keyboard.row(*[types.KeyboardButton(btn) for btn in self.available_tickers[i:i+row_width]])
 
-            self.bot.send_message(call.message.chat.id, "Выберите валютную пару:", reply_markup=keyboard)
+            self.bot.send_message(call.message.chat.id, "Выберите криптовалютную пару:", reply_markup=keyboard)
         except Exception as err:
             print(err)
             self.logger.error(f"Error after hitting new strategy for user {call.message.chat.id}: {err}")
@@ -220,7 +220,7 @@ class TelegramBot:
             for i in range(0, len(self.available_tickers), row_width):
                 keyboard.row(*[types.KeyboardButton(btn) for btn in self.available_tickers[i:i+row_width]])
 
-            self.bot.send_message(user_id, "Выберите новую валютную пару:", reply_markup=keyboard)
+            self.bot.send_message(user_id, "Выберите новую криптовалютную пару:", reply_markup=keyboard)
 
         elif call.data.startswith("strategy_delete_"):
             strat_id = int(call.data.replace("strategy_delete_", ""))

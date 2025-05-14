@@ -1,0 +1,24 @@
+# Приводим все к Linux-стилю
+* text=auto
+
+# Python-файлы, shell-скрипты, конфиги — только LF
+*.py text eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ini text eol=lf
+*.env text eol=lf
+*.conf text eol=lf
+*.sql text eol=lf
+
+# Markdown и документация
+*.md text eol=lf
+*.txt text eol=lf
+
+# JSON (параметры стратегий)
+*.json text eol=lf
+
+# Лог-файлы и отчёты (если коммитятся)
+*.log text eol=lf
+*.csv text eol=lf

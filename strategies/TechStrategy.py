@@ -1,18 +1,24 @@
 import pandas_ta as ta
 from bybit.BybitHelper import Bybit
 
-class Strategy:
+# !!! ATTENTION !!!
+# -------- 1 --------
+# Если в стратегии вход по хай/лоу последней свечи - нужно увеличить/уменьшить цену-триггер на 1-2 пункта
+# Это нужно из-за API Bybit, потому что если цена закрылась на хай/лоу, то цена "не пришла сверху/снизу" (triggerDirection)
+
+class MyStrategy:
+    params = {
+        "timeframe": 1,
+        "volume_levels": (30, 77, 554), # (2.5e3, 6.9e3, 23.5e3) - м60
+        "ma_period": 10,
+        "stochastic_params": (14, 3, 3),
+        "window": 4,
+        "rsi_levels": (30, 70),
+        "max_loss_percent": 2,
+        "leverage": 1
+    }
+
     def __init__(self, broker: Bybit):
-        self.params = {
-            "timeframe": 1,
-            "volume_levels": (30, 77, 554), # (2.5e3, 6.9e3, 23.5e3) - м60
-            "ma_period": 10,
-            "stochastic_params": (14, 3, 3),
-            "window": 4,
-            "rsi_levels": (30, 70),
-            "max_loss_percent": 2,
-            "leverage": 1
-        }
         self.__broker = broker
         self.__takerFee = broker.get_fee_rates()[0]
 
