@@ -1,21 +1,33 @@
 from pybit.unified_trading import HTTP, WebSocket
-from telegram.TelegramHelper import Telegram
 import pandas as pd
 from time import sleep
 import datetime as dt
 from logs.logger import get_logger
 
-class Bybit:
-    def __init__(self, api, secret, telegram: Telegram = None):
-        self.__session = HTTP(api_key=api, api_secret=secret, testnet=False)
-        self.__ws = WebSocket(channel_type="private", api_key=api, api_secret=secret, testnet=False)
-        self.__telegram = telegram
-        self.__logger = get_logger('bybit')
+# timeframe 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, M, W
+timeframe_match = {
+    '1 мин': '1',
+    '1 час': '60',
+}
 
-        self.start_order_ws_stream() # Запуск отслеживания ордеров через WebSocket
+class Bybit:
+    def __init__(self, api, secret, user_id=None, telegram_bot=None):
+        self.__bot = telegram_bot
+        self.__user_id = user_id
+        self.__session = HTTP(api_key=api, api_secret=secret, testnet=False)
+        self.__ws = None
+        self.__logger = get_logger('bybit')
+        self.is_connected = True
+
+        if self.get_balance() != None:
+            self.__ws = WebSocket(channel_type="private", api_key=api, api_secret=secret, testnet=False)
+            self.start_order_ws_stream() # Запуск отслеживания ордеров через WebSocket
+        else:
+            self.is_connected = False
 
     def __del__(self):
-        self.stop_ws_stream() # Остановка отслеживания ордеров через WebSocket
+        if self.is_connected:
+            self.stop_ws_stream() # Остановка отслеживания ордеров через WebSocket
 
     def filled_order_callback(self, message):
         if not message['data']:
@@ -32,8 +44,9 @@ class Bybit:
                         f"Количество: {order['cumExecQty']} ({order['cumExecValue']} USDT)."
                     )
 
-                    if self.__telegram:
-                        self.__telegram.send_telegram(text)
+                    # могут приходить на все ордера, даже когда не запущена стратегия
+                    if self.__bot and self.__user_id:
+                        self.__bot.send_message_to_user(self.__user_id, text)
                     else:
                         print(text)
 
@@ -68,7 +81,6 @@ class Bybit:
             return float(resp)
         
         except Exception as err:
-            print(err)
             self.__logger.error('Cannot get balance')
             return None
         
@@ -465,8 +477,8 @@ class Bybit:
                 f"Количество: {qty} ({round(qty * mark_price, 4)} USDT)."
             )
 
-            if self.__telegram:
-                self.__telegram.send_telegram(text)
+            if self.__bot and self.__user_id:
+                self.__bot.send_message_to_user(self.__user_id, text)
             else:
                 print(text)
             
@@ -557,8 +569,8 @@ class Bybit:
                 f"Количество: {qty} ({round(qty * price, 4)} USDT)."
             )
 
-            if self.__telegram:
-                self.__telegram.send_telegram(text)
+            if self.__bot and self.__user_id:
+                self.__bot.send_message_to_user(self.__user_id, text)
             else:
                 print(text)
             

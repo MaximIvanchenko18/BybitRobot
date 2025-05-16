@@ -13,7 +13,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(String, unique=True, nullable=False)
+    telegram_id = Column(Integer, unique=True, nullable=False)
     api_key = Column(String, nullable=False)
     api_secret = Column(String, nullable=False)
     created_at = Column(DateTime, default=func.now(), server_default=func.now(), nullable=False)

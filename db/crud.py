@@ -22,19 +22,26 @@ def create_user(db: Session, telegram_id: str, api_key: str, api_secret: str) ->
         logger.error(f"Error while creating user with tg-id: {telegram_id}: {err}")
         return None
 
-def create_bot(db: Session, user_id: int, current_balance: float) -> Bot:
+def create_bot(db: Session, telegram_id: int, current_balance: float=None) -> Bot:
     try:
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        user_id = users[0].id
+
         bot = db.query(Bot).filter_by(user_id=user_id).first()
         if bot:
             return bot
-        new_bot = Bot(user_id=user_id, current_balance=current_balance)
+        new_bot = Bot(user_id=user_id)
+        if current_balance:
+            new_bot.current_balance = current_balance
         db.add(new_bot)
         db.commit()
         db.refresh(new_bot)
         return new_bot
     except Exception as err:
         print(err)
-        logger.error(f"Error while creating bot for user: {user_id}: {err}")
+        logger.error(f"Error while creating bot for user: {telegram_id}: {err}")
         return None
 
 
@@ -63,17 +70,18 @@ def get_or_create_trade_settings(db: Session, coin_name: str, leverage: int, tim
         logger.error(f"Error while getting/creating trade setting: {err}")
         return None
 
-def create_trade_with_strategy(db: Session, user_id: int, current_balance: float, coin_name: str, leverage: int, timeframe: str, depo_procent: float) -> Trade:
+def create_trade_with_strategy(db: Session, telegram_id: int, coin_name: str, leverage: int, timeframe: str, depo_procent: float) -> Trade:
     try:
-        user = db.query(User).filter_by(id=user_id).first()
-        if not user:
-            raise ValueError("User not found")
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        user_id = users[0].id
 
         settings = get_or_create_trade_settings(db, coin_name, leverage, timeframe, depo_procent)
 
         existing_bot = db.query(Bot).filter_by(user_id=user_id).first()
         if not existing_bot:
-            create_bot(db, user_id, current_balance)
+            create_bot(db, telegram_id)
 
         new_trade = Trade(
             user_id=user_id,
@@ -85,23 +93,38 @@ def create_trade_with_strategy(db: Session, user_id: int, current_balance: float
         return new_trade
     except Exception as err:
         print(err)
-        logger.error(f"Error while creating trade for user {user_id}: {err}")
+        logger.error(f"Error while creating trade for user {telegram_id}: {err}")
         return None
     
-def get_user(db: Session, user_id: int) -> Optional[User]:
+def get_user(db: Session, telegram_id: int) -> Optional[User]:
     try:
-        return db.query(User).filter_by(id=user_id).first()
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        
+        return {
+            'id': users[0].id,
+            'telegram_id': users[0].telegram_id,
+            'api_key': users[0].api_key,
+            'api_secret': users[0].api_secret,
+            'created_at': users[0].created_at
+        }
     except Exception as err:
         print(err)
-        logger.error(f"Error while getting user {user_id}: {err}")
+        logger.error(f"Error while getting user {telegram_id}: {err}")
         return None
     
-def get_bot(db: Session, bot_id: int) -> Optional[Bot]:
+def get_bot(db: Session, telegram_id: int) -> Optional[Bot]:
     try:
-        return db.query(Bot).filter_by(id=bot_id).first()
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        user_id = users[0].id
+
+        return db.query(Bot).filter_by(user_id=user_id).first()
     except Exception as err:
         print(err)
-        logger.error(f"Error while getting bot {bot_id}: {err}")
+        logger.error(f"Error while getting bot for user {telegram_id}: {err}")
         return None
     
 def get_trade(db: Session, trade_id: int) -> Optional[Trade]:
@@ -112,20 +135,41 @@ def get_trade(db: Session, trade_id: int) -> Optional[Trade]:
         logger.error(f"Error while getting trade {trade_id}: {err}")
         return None
 
-def get_user_strategies(db: Session, user_id: int) -> List[Dict]:
+def get_user_strategies(db: Session, telegram_id: int) -> List[Dict]:
     try:
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        user_id = users[0].id
+
         trades = db.query(Trade).filter_by(user_id=user_id).all()
+        if not trades:
+            return None
+        
         strategy_ids = list(set([t.strategy_id for t in trades if t.strategy_id is not None]))
         strategies = db.query(TradeSettings).filter(TradeSettings.id.in_(strategy_ids)).all()
-        return [s for s in strategies]
+        return [
+            {
+                "id": s.id,
+                "coin_name": s.coin_name,
+                "leverage": s.leverage,
+                "timeframe": s.timeframe,
+                "depo_procent": s.depo_procent
+            }
+            for s in strategies
+        ]
     except Exception as err:
         print(err)
-        logger.error(f"Error while getting strategies for user {user_id}: {err}")
+        logger.error(f"Error while getting strategies for user {telegram_id}: {err}")
         return None
     
-def update_user(db: Session, user_id: int, api_key: str=None, api_secret: str=None, created_at: datetime=None) -> Optional[User]:
+def update_user(db: Session, telegram_id: int, api_key: str=None, api_secret: str=None, created_at: datetime=None) -> Optional[User]:
     try:
-        user = get_user(db, user_id)
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+
+        user = users[0]
         if not user:
             raise ValueError("User not found")
         if api_key:
@@ -139,12 +183,12 @@ def update_user(db: Session, user_id: int, api_key: str=None, api_secret: str=No
         return user
     except Exception as err:
         print(err)
-        logger.error(f"Error while updating user {user_id}: {err}")
+        logger.error(f"Error while updating user {telegram_id}: {err}")
         return None
     
-def update_bot(db: Session, bot_id: int, current_balance: float=None, all_time_pnl: float=None, is_running: bool=None) -> Optional[Bot]:
+def update_bot(db: Session, telegram_id: int, current_balance: float=None, all_time_pnl: float=None, is_running: bool=None) -> Optional[Bot]:
     try:
-        bot = get_bot(db, bot_id)
+        bot = get_bot(db, telegram_id)
         if not bot:
             raise ValueError("Bot not found")
         if current_balance:
@@ -158,7 +202,7 @@ def update_bot(db: Session, bot_id: int, current_balance: float=None, all_time_p
         return bot
     except Exception as err:
         print(err)
-        logger.error(f"Error while updating bot {bot_id}: {err}")
+        logger.error(f"Error while updating bot for user {telegram_id}: {err}")
         return None
     
 def update_trade(db: Session, trade_id: int, entry_price: float=None, current_pnl: float=None, is_active: bool=None, opened_at: datetime=None, closed_at: datetime=None) -> Optional[Trade]:
@@ -184,11 +228,41 @@ def update_trade(db: Session, trade_id: int, entry_price: float=None, current_pn
         logger.error(f"Error while updating trade {trade_id}: {err}")
         return None
 
-def update_trade_settings(db: Session, strategy_id: int, coin_name: str=None, leverage: int=None, timeframe: str=None, depo_procent: float=None) -> Optional[TradeSettings]:
+def update_trade_settings(db: Session, telegram_id: str, strategy_id: int, coin_name: str=None, leverage: int=None, timeframe: str=None, depo_procent: float=None) -> Optional[TradeSettings]:
     try:
         settings = db.query(TradeSettings).filter_by(id=strategy_id).first()
         if not settings:
             raise ValueError("Trading setting not found")
+        # 1. Если параметры не изменились — выходим
+        if (coin_name == settings.coin_name and
+            leverage == settings.leverage and
+            timeframe == settings.timeframe and
+            depo_procent == settings.depo_procent):
+            return settings  # ничего не меняем
+        
+        # Получаем пользователя
+        user = db.query(User).filter_by(telegram_id=telegram_id).first()
+        if not user:
+            raise ValueError("User not found")
+        
+        # 2. Проверим, существует ли уже такая стратегия
+        existing = db.query(TradeSettings).filter_by(
+            coin_name=coin_name,
+            leverage=leverage,
+            timeframe=timeframe,
+            depo_procent=depo_procent
+        ).first()
+        if existing:
+            # Обновить трейды пользователя, использующие эту стратегию
+            trades_to_update = db.query(Trade).filter_by(
+                user_id=user.id,
+                strategy_id=strategy_id
+            ).all()
+            for trade in trades_to_update:
+                trade.strategy_id = existing.id
+            
+            return existing
+        
         if coin_name:
             settings.coin_name = coin_name
         if leverage:
@@ -205,9 +279,13 @@ def update_trade_settings(db: Session, strategy_id: int, coin_name: str=None, le
         logger.error(f"Error while updating trade setting {strategy_id}: {err}")
         return None
     
-def delete_user(db: Session, user_id: int) -> bool:
+def delete_user(db: Session, telegram_id: int) -> bool:
     try:
-        user = get_user(db, user_id)
+        users = db.query(User).filter_by(telegram_id=telegram_id).all()
+        if len(users) > 1:
+            raise ValueError("More than one user found")
+        
+        user = users[0]
         if not user:
             return False
         db.delete(user)
@@ -215,7 +293,7 @@ def delete_user(db: Session, user_id: int) -> bool:
         return True
     except Exception as err:
         print(err)
-        logger.error(f"Error while deleting user {user_id}: {err}")
+        logger.error(f"Error while deleting user {telegram_id}: {err}")
         return None
 
 def delete_trade(db: Session, trade_id: int) -> bool:
@@ -231,9 +309,9 @@ def delete_trade(db: Session, trade_id: int) -> bool:
         logger.error(f"Error while deleting trade {trade_id}: {err}")
         return None
     
-def sync_bot_balance(db: Session, bot_id: int, new_balance: float) -> Optional[Bot]:
+def sync_bot_balance(db: Session, telegram_id: int, new_balance: float) -> Optional[Bot]:
     try:
-        bot = get_bot(db, bot_id)
+        bot = get_bot(db, telegram_id)
         if not bot:
             raise ValueError("Bot not found")
         pnl_change = new_balance - bot.current_balance
@@ -244,7 +322,7 @@ def sync_bot_balance(db: Session, bot_id: int, new_balance: float) -> Optional[B
         return bot
     except Exception as err:
         print(err)
-        logger.error(f"Error while syncing balance for bot {bot_id}: {err}")
+        logger.error(f"Error while syncing balance for bot for user {telegram_id}: {err}")
         return None
     
 def open_trade(db: Session, trade_id: int, entry_price: float) -> Optional[Trade]:
@@ -263,12 +341,13 @@ def open_trade(db: Session, trade_id: int, entry_price: float) -> Optional[Trade
         logger.error(f"Error while closing trade {trade_id}: {err}")
         return None
     
-def close_trade(db: Session, trade_id: int, pnl: float) -> Optional[Trade]:
+def close_trade(db: Session, trade_id: int, pnl: float=None) -> Optional[Trade]:
     try:
         trade = get_trade(db, trade_id)
         if not trade or not trade.is_active:
             return None
-        trade.current_pnl = pnl
+        if pnl:
+            trade.current_pnl = pnl
         trade.is_active = False
         trade.closed_at = datetime.now()
         db.commit()

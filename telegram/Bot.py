@@ -2,7 +2,11 @@ from telebot import TeleBot, types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import config
 from logs.logger import get_logger
-from session import active_users
+from global_strategies import active_strategies
+from bybit.BybitHelper import Bybit, timeframe_match
+from strategies.Strategy import Strategy
+from db.session import DBSessionManager
+from db.crud import *
 
 class TelegramBot:
     def __init__(self, token):
@@ -65,17 +69,24 @@ class TelegramBot:
         try:
             self.bot.answer_callback_query(call.id)  # убирает загрузку
             state = self.user_state.get(call.message.chat.id, {})
-            # TODO: здесь будет проверка ключей через Bybit API
-            valid = True  # Заглушка
+            valid = False
+            broker = Bybit(state['api_key'], state['api_secret'])
+            balance = 0
+            if broker.is_connected:
+                valid = True
+                balance = broker.get_balance()
 
             if valid:
                 state['verified'] = True
-                self.bot.send_message(call.message.chat.id, "✅ Подключение прошло успешно!")
+                with DBSessionManager() as db:
+                    create_user(db, telegram_id=call.message.chat.id, api_key=state['api_key'], api_secret=state['api_secret'])
+                    create_bot(db, telegram_id=call.message.chat.id, current_balance=balance)
+                self.bot.send_message(call.message.chat.id, f"✅ Подключение прошло успешно! Ваш баланс: {balance} USDT")
                 self.logger.info(f'New user registered: {call.message.chat.id}')
                 self.go_main_menu(call.message)
             else:
                 self.bot.send_message(call.message.chat.id, "❌ Ошибка подключения. Введите ключи заново.")
-                self.connect_exchange(call.message)
+                self.connect_exchange(call)
         except Exception as err:
             print(err)
             self.logger.error(f"Error while confirming API keys for user {call.message.chat.id}: {err}")
@@ -91,8 +102,11 @@ class TelegramBot:
 
             keyboard = InlineKeyboardMarkup()
             keyboard.add(InlineKeyboardButton("➕ Задать параметры новой стратегии", callback_data="set_new_strategy"))
-            # TODO: если есть стратегии → добавить кнопку "📂 Список сохранённых стратегий"
-            keyboard.add(InlineKeyboardButton("📂 Список сохранённых стратегий", callback_data="saved_strategies_list"))
+            strategies = None
+            with DBSessionManager() as db:
+                strategies = get_user_strategies(db, user_id)
+            if strategies and len(strategies) > 0:
+                keyboard.add(InlineKeyboardButton("📂 Список сохранённых стратегий", callback_data="saved_strategies_list"))
 
             self.bot.send_message(user_id, "Главное меню:", reply_markup=keyboard)
             self.user_state[user_id]['step'] = 'main_menu'
@@ -107,7 +121,7 @@ class TelegramBot:
     def send_help(self, message):
         text = (
             f"📘 Команды:\n"
-            f"/start — Полный перезапуск робота с нуля (до введения API ключей)\n"
+            f"/start — Полный перезапуск робота с нуля (новый ввод API ключей)\n"
             f"/main — Главное меню (создание новых и выбор уже созданных Вами стратегий)\n"
             f"/help — Вызов текущей инструкции"
         )
@@ -137,10 +151,14 @@ class TelegramBot:
         self.bot.send_message(message.chat.id, "Введите плечо (например, 5):", reply_markup=types.ReplyKeyboardRemove())
 
     def set_timeframe(self, message):
-        self.temp_strategy_data[message.chat.id]['timeframe'] = message.text
-        self.user_state[message.chat.id]['step'] = 'awaiting_percent'
+        try:
+            self.temp_strategy_data[message.chat.id]['timeframe'] = timeframe_match[message.text]
+            self.user_state[message.chat.id]['step'] = 'awaiting_percent'
 
-        self.bot.send_message(message.chat.id, "Введите торгуемый процент от депозита (1-100). Желательно, чтобы он составлял не менее 100$:", reply_markup=types.ReplyKeyboardRemove())
+            self.bot.send_message(message.chat.id, "Введите торгуемый процент от депозита (1-100). Желательно, чтобы он составлял не менее 100$:", reply_markup=types.ReplyKeyboardRemove())
+        except Exception as err:
+            print(err)
+            self.logger.error(f"Error while getting timeframe for user {message.chat.id}: {err}")
 
     def save_strategy(self, call):
         self.bot.answer_callback_query(call.id)  # убирает загрузку
@@ -149,9 +167,11 @@ class TelegramBot:
         strat_id = strat.get('id', -1)
 
         if strat_id == -1: # Новая стратегия
-            pass # TODO: сохранить новую стратегию в БД
+            with DBSessionManager() as db:
+                create_trade_with_strategy(db, user_id, coin_name=strat['coin'], leverage=strat['leverage'], timeframe=strat['timeframe'], depo_procent=strat['percent'])
         else: # Изменение существующей
-            pass # TODO: изменить стратегию в БД
+            with DBSessionManager() as db:
+                update_trade_settings(db, user_id, strategy_id=strat_id, coin_name=strat['coin'], leverage=strat['leverage'], timeframe=strat['timeframe'], depo_procent=strat['percent'])
 
         self.bot.send_message(user_id, f"Стратегия сохранена!", reply_markup=types.ReplyKeyboardRemove())
         self.logger.info(f"Strategy saved for user {user_id}: {strat}")
@@ -160,17 +180,17 @@ class TelegramBot:
 
     def show_strategies(self, call):
         self.bot.answer_callback_query(call.id)  # убирает загрузку
-        # Заглушка получения стратегий пользователя
         user_id = call.message.chat.id
-        strategies = [
-            {'id': 1, 'coin': 'BNBUSDT', 'lev': 4, 'tf': '1м', 'pct': 50},
-            {'id': 2, 'coin': 'BNBUSDT', 'lev': 3, 'tf': '1ч', 'pct': 30},
-        ]  # TODO: заменить на реальные данные из БД
+        strategies = []
+        with DBSessionManager() as db:
+            strategies = get_user_strategies(db, user_id)
+        if not strategies:
+            strategies = []
 
         keyboard = InlineKeyboardMarkup()
 
-        for strat in strategies:
-            name = f"Стратегия №{strat['id']} ({strat['coin']}, {strat['lev']}lev, {strat['tf']}, {strat['pct']}%)"
+        for i, strat in enumerate(strategies):
+            name = f"Стратегия №{i+1} ({strat['coin_name']}, {strat['leverage']}lev, {strat['timeframe']}, {strat['depo_procent']}%)"
             callback_data = f"select_strategy_{strat['id']}"
             keyboard.add(InlineKeyboardButton(name, callback_data=callback_data))
 
@@ -200,8 +220,13 @@ class TelegramBot:
         if call.data.startswith("strategy_run_"):
             strat_id = int(call.data.replace("strategy_run_", ""))
 
-            # 🟡 Заглушка запуска
-            active_users[user_id] = strat_id
+            with DBSessionManager() as db:
+                user = get_user(db, user_id)
+                broker = Bybit(user['api_key'], user['api_secret'])
+                balance = broker.get_balance()
+                update_bot(db, user_id, current_balance=balance, is_running=True)
+            if user_id not in active_strategies:
+                active_strategies[user_id] = Strategy(self, user_id, strat_id)
 
             keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
             keyboard.add(types.KeyboardButton("❌ Остановить робота"))
@@ -225,7 +250,8 @@ class TelegramBot:
         elif call.data.startswith("strategy_delete_"):
             strat_id = int(call.data.replace("strategy_delete_", ""))
 
-            # 🟡 Заглушка удаления
+            with DBSessionManager() as db:
+                delete_trade(db, strat_id)
 
             self.bot.send_message(user_id, f"🗑 Стратегия №{strat_id} удалена")
             self.go_main_menu(call.message)
@@ -234,8 +260,15 @@ class TelegramBot:
         try:
             user_id = message.chat.id
 
-            del active_users[user_id]
-            self.logger.info(f'Bot stopped working for user: {message.chat.id}')
+            with DBSessionManager() as db:
+                user = get_user(db, user_id)
+                broker = Bybit(user['api_key'], user['api_secret'])
+                balance = broker.get_balance()
+                update_bot(db, user_id, current_balance=balance, is_running=False)
+            if user_id in active_strategies:
+                del active_strategies[user_id]
+
+            self.logger.info(f'Bot stopped working for user: {user_id}')
             self.bot.send_message(user_id, "Робот остановлен!", reply_markup=types.ReplyKeyboardRemove())
         except Exception as err:
             print(err)
@@ -265,9 +298,10 @@ class TelegramBot:
         elif state == 'awaiting_leverage':
             if message.text.strip().isdigit() and int(message.text.strip()) > 0:
                 leverage = int(message.text.strip())
-                max_leverage = 100 # !!! Нужно взять через Bybit
+                broker = Bybit('xxx', 'xxx')
+                max_leverage = int(broker.get_max_leverage(self.temp_strategy_data[user_id]['coin']))
                 if leverage <= max_leverage:
-                    self.temp_strategy_data[user_id]['leverage'] = int(message.text.strip())
+                    self.temp_strategy_data[user_id]['leverage'] = leverage
                     self.user_state[user_id]['step'] = 'awaiting_timeframe'
 
                     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
